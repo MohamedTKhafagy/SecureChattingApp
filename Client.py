@@ -1,7 +1,8 @@
 import socket
 import tkinter as tk
-from tkinter import ttk, scrolledtext, messagebox, filedialog
+from tkinter import ttk, messagebox, filedialog
 from threading import Thread
+from tkinter.scrolledtext import ScrolledText
 import os
 
 
@@ -27,6 +28,7 @@ class ChatClient:
 
         # Show login frame initially
         self.show_login_frame()
+        self.private_chat_windows = {}
 
     def setup_login_frame(self):
         self.login_frame = ttk.Frame(self.main_container)
@@ -63,7 +65,7 @@ class ChatClient:
         right_panel.pack(side=tk.RIGHT, fill=tk.Y, padx=(5, 0))
 
         # Chat area
-        self.chat_display = scrolledtext.ScrolledText(left_panel, wrap=tk.WORD, height=20)
+        self.chat_display = ScrolledText(left_panel, wrap=tk.WORD, height=20)
         self.chat_display.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
 
         # Message input area
@@ -120,6 +122,22 @@ class ChatClient:
                 if message:
                     if message.startswith("ONLINE_USERS:"):
                         self.update_online_users(message[13:].split(","))
+                    elif message.startswith("CHAT_REQUEST:"):
+                        sender = message.split(":")[1]
+                        self.root.after(0, lambda s=sender: self.handle_chat_request(s))
+                    elif message.startswith("CHAT_RESPONSE:"):
+                        parts = message.split(":")
+                        recipient = parts[1]
+                        response = parts[2]
+                        if response == "accept":
+                            self.root.after(0, lambda r=recipient: self.open_private_chat(r))
+                        else:
+                            messagebox.showinfo("Chat Request", f"{recipient} refused the chat request.")
+                    elif message.startswith("PRIVATE_MESSAGE:"):
+                        parts = message.split(":")
+                        sender = parts[1]
+                        private_message = ":".join(parts[2:])
+                        self.display_private_message(sender, private_message)
                     else:
                         self.update_chat_display(message)
             except:
@@ -248,7 +266,127 @@ class ChatClient:
             return
 
         recipient = self.users_listbox.get(selected[0])
+
+        # Check if a private chat window already exists
+        if recipient in self.private_chat_windows:
+            try:
+                if self.private_chat_windows[recipient].winfo_exists():
+                    self.private_chat_windows[recipient].lift()
+                    return
+            except:
+                pass
+
+        # If no existing window, send chat request
         self.client_socket.send(f"START_CHAT\n{recipient}".encode())
+
+    def handle_chat_request(self, sender):
+        # Show a dialog to accept or refuse the chat request
+        response = messagebox.askyesno("Chat Request",f"{sender} wants to start a private chat. Accept?")
+
+        # Send response back to server
+        if response:
+            self.client_socket.send(f"CHAT_RESPONSE\n{sender}\naccept".encode())
+            # Open a new window or tab for private chat
+            self.open_private_chat(sender)
+        else:
+            self.client_socket.send(f"CHAT_RESPONSE\n{sender}\nrefuse".encode())
+
+    def open_private_chat(self, with_user):
+        # Check if a window for this user already exists
+        if with_user in self.private_chat_windows and self.private_chat_windows[with_user]:
+            try:
+                # Check if window is still valid
+                if self.private_chat_windows[with_user].winfo_exists():
+                    return self.private_chat_windows[with_user]
+            except:
+                pass
+
+        # Create a new top-level window for private chat
+        private_chat_window = tk.Toplevel(self.root)
+        private_chat_window.title(f"Private Chat with {with_user}")
+        private_chat_window.geometry("500x400")
+
+        # Chat display area with more advanced text widget
+        chat_display = tk.Text(
+            private_chat_window,
+            wrap=tk.WORD,
+            height=20,
+            state='disabled',  # Start in disabled state
+            padx=10,
+            pady=10
+        )
+        chat_display.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+
+        # Configure tags for different message types
+        chat_display.tag_configure('sender', foreground='blue')
+        chat_display.tag_configure('you', foreground='green')
+        chat_display.tag_configure('system', foreground='gray', font=('Arial', 10, 'italic'))
+
+        # Scrollbar for text widget
+        scrollbar = tk.Scrollbar(private_chat_window, command=chat_display.yview)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        chat_display.config(yscrollcommand=scrollbar.set)
+
+        # Add a method to safely append messages
+        def append_message(message, tag='sender'):
+            def _append():
+                chat_display.configure(state='normal')
+                chat_display.tag_config(tag)
+                chat_display.tag_add(tag, tk.END)
+                chat_display.tag_add('all', tk.END)
+
+                # Append message with specific tag
+                chat_display.insert(tk.END, message + '\n', tag)
+
+                # Auto-scroll to the end
+                chat_display.see(tk.END)
+                chat_display.configure(state='disabled')
+
+            # Use after to ensure thread-safety
+            private_chat_window.after(0, _append)
+
+        # Store the append_message method with the window for later use
+        private_chat_window.append_message = append_message
+
+        # Message input area
+        input_frame = ttk.Frame(private_chat_window)
+        input_frame.pack(fill=tk.X, pady=(0, 10))
+
+        message_entry = ttk.Entry(input_frame)
+        message_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
+
+        def send_private_message():
+            message = message_entry.get().strip()
+            if message:
+                self.client_socket.send(f"PRIVATE_MESSAGE\n{with_user}\n{message}".encode())
+
+                # Use the new append method with 'you' tag
+                append_message(f"You: {message}", 'you')
+                message_entry.delete(0, tk.END)
+
+        ttk.Button(input_frame, text="Send", command=send_private_message).pack(side=tk.LEFT)
+        message_entry.bind("<Return>", lambda e: send_private_message())
+
+        # Handle window close event
+        def on_window_close():
+            if with_user in self.private_chat_windows:
+                del self.private_chat_windows[with_user]
+            private_chat_window.destroy()
+
+        private_chat_window.protocol("WM_DELETE_WINDOW", on_window_close)
+
+        # Store the window
+        self.private_chat_windows[with_user] = private_chat_window
+
+        return private_chat_window
+
+    def display_private_message(self, sender, message):
+        # Find or create private chat window
+        private_window = self.open_private_chat(sender)
+
+        # Use the append_message method we added
+        if hasattr(private_window, 'append_message'):
+            private_window.append_message(f"{sender}: {message}")
 
     def logout(self):
         if self.connected:

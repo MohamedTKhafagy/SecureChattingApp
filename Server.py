@@ -144,6 +144,23 @@ class ChatServer:
                 elif data == "logout":
                     break
 
+                elif data.startswith("START_CHAT\n"):
+                    recipient = data.split("\n")[1]
+                    self.handle_private_chat_request(username, recipient)
+
+                elif data.startswith("CHAT_RESPONSE\n"):
+                    parts = data.split("\n")
+                    recipient = parts[1]
+                    response = parts[2]  # "accept" or "refuse"
+                    self.handle_chat_response(username, recipient, response)
+
+                    # Add private message handling
+                elif data.startswith("PRIVATE_MESSAGE\n"):
+                    parts = data.split("\n")
+                    recipient = parts[1]
+                    message = parts[2]
+                    self.send_private_message(username, recipient, message)
+
             except Exception as e:
                 print(f"Error in message loop: {e}")
                 break
@@ -199,6 +216,41 @@ class ChatServer:
             print(f"File transfer error: {e}")
             client_socket.send(f"File transfer failed: {str(e)}".encode())
 
+    def handle_private_chat_request(self, sender, recipient):
+        # Check if recipient is online
+        with self.active_users_lock:
+            if recipient in self.active_users:
+                recipient_socket = self.active_users[recipient]
+                try:
+                    # Send chat request to recipient
+                    recipient_socket.send(f"CHAT_REQUEST:{sender}".encode())
+                except Exception as e:
+                    print(f"Error sending chat request: {e}")
+                    return False
+            else:
+                return False
+        return True
+
+    def handle_chat_response(self, sender, recipient, response):
+        with self.active_users_lock:
+            if recipient in self.active_users and sender in self.active_users:
+                sender_socket = self.active_users[sender]
+                recipient_socket = self.active_users[recipient]
+                try:
+                    # Forward response to sender
+                    sender_socket.send(f"CHAT_RESPONSE:{recipient}:{response}".encode())
+                except Exception as e:
+                    print(f"Error sending chat response: {e}")
+
+    def send_private_message(self, sender, recipient, message):
+        with self.active_users_lock:
+            if recipient in self.active_users:
+                recipient_socket = self.active_users[recipient]
+                try:
+                    print(f"PRIVATE_MESSAGE:{sender}:{message}")
+                    recipient_socket.send(f"PRIVATE_MESSAGE:{sender}:{message}".encode())
+                except Exception as e:
+                    print(f"Error sending private message: {e}")
     def run(self):
         print("Server is running and waiting for connections...")
         while True:
