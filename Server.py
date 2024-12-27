@@ -4,6 +4,7 @@ from threading import Thread, Lock
 import time
 import os
 from datetime import datetime
+from Hashing import Hashing
 
 
 class ChatServer:
@@ -181,7 +182,7 @@ class ChatServer:
                 if data.startswith("MESSAGE\n"):
                     message = data[8:]
                     print(f"Broadcasting message from {username}: {message}")  # Debug print
-                    self.broadcast_message(username, message)
+                    self.broadcast_message(username, message, client_socket)
 
                 elif data.startswith("FILE\n"):
                     self.handle_file_transfer(client_socket, username)
@@ -231,30 +232,41 @@ class ChatServer:
                 except:
                     continue
 
-    def broadcast_message(self, sender, message):
-        timestamp = datetime.now()
-        formatted_message = f"[{timestamp.strftime('%Y-%m-%d %H:%M:%S')}] {sender}: {message}"
+    def broadcast_message(self, sender, message, client_socket):
+        if "\nHASH:" in message:
+            content, received_hash = message.split("\nHASH:", 1)
+            # Verify the message hash
+            if not Hashing.verify_content(content, received_hash):
+                print(f"Message from {sender} failed hash verification.")
+                try:
+                    client_socket.send("ERROR: Invalid message hash. Message not broadcast.".encode())
+                except Exception as e:
+                    print(f"Error sending hash verification failure to {sender}: {e}")
+                return
+        else:
+            content = message
 
         # Store message in database
         try:
+            timestamp = datetime.now()
             conn = sqlite3.connect("ChatApp.db")
             cursor = conn.cursor()
             cursor.execute("""
-                INSERT INTO broadcast_messages (sender, content, sent_at)
-                VALUES (?, ?, ?)
-            """, (sender, message, timestamp))
+                    INSERT INTO broadcast_messages (sender, content, sent_at)
+                    VALUES (?, ?, ?)
+                """, (sender, content, timestamp))
             conn.commit()
             conn.close()
-        except Exception as e:
-            print(f"Error storing broadcast message: {e}")
 
-        # Send to all active users
-        with self.active_users_lock:
-            for username, sock in self.active_users.items():
+            formatted_message = f"[{timestamp.strftime('%Y-%m-%d %H:%M:%S')}] {sender}: {content}"
+            with self.active_users_lock:
+                for username, sock in self.active_users.items():
                     try:
                         sock.send(formatted_message.encode())
-                    except:
-                        continue
+                    except Exception as e:
+                        print(f"Error sending to {username}: {e}")
+        except Exception as e:
+            print(f"Error storing broadcast message: {e}")
 
     def load_historical_messages(self):
         try:
@@ -278,6 +290,7 @@ class ChatServer:
         try:
             file_name = client_socket.recv(1024).decode().strip()
             file_size = int(client_socket.recv(1024).decode().strip())
+            received_hash = client_socket.recv(1024).decode().strip()
 
             os.makedirs("uploads", exist_ok=True)
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -292,7 +305,16 @@ class ChatServer:
                     file.write(data)
                     received_data += len(data)
 
-            self.broadcast_message(username, f"shared a file: {file_name}")
+            with open(unique_filename, 'rb') as file:
+                file_data = file.read()
+            if not Hashing.verify_content(file_data, received_hash):
+                print(f"File hash mismatch for file: {file_name}")
+                client_socket.send("File transfer failed: hash mismatch.".encode())
+                os.remove(unique_filename)  # Remove the corrupted file
+                return
+
+            self.broadcast_message(username, f"shared a file: {file_name}", client_socket)
+
 
         except Exception as e:
             print(f"File transfer error: {e}")
@@ -367,12 +389,19 @@ class ChatServer:
                     print(f"Error sending chat response: {e}")
 
     def send_private_message(self, sender, recipient, message):
+        if "\nHASH:" in message:
+            content, received_hash = message.split("\nHASH:", 1)
+            if not Hashing.verify_content(content, received_hash):
+                print(f"Private message from {sender} to {recipient} failed hash verification.")
+                return
+        else:
+            content = message
         with self.active_users_lock:
             if recipient in self.active_users:
                 recipient_socket = self.active_users[recipient]
                 try:
-                    print(f"PRIVATE_MESSAGE:{sender}:{message}")
-                    recipient_socket.send(f"PRIVATE_MESSAGE:{sender}:{message}".encode())
+                    print(f"PRIVATE_MESSAGE:{sender}:{content}")
+                    recipient_socket.send(f"PRIVATE_MESSAGE:{sender}:{content}".encode())
                 except Exception as e:
                     print(f"Error sending private message: {e}")
     def run(self):

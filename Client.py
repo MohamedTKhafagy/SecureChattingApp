@@ -4,6 +4,7 @@ from tkinter import ttk, messagebox, filedialog
 from threading import Thread
 from tkinter.scrolledtext import ScrolledText
 import os
+from Hashing import Hashing
 
 
 class ChatClient:
@@ -151,11 +152,15 @@ class ChatClient:
                         sender = parts[1]
                         private_message = ":".join(parts[2:])
                         self.display_private_message(sender, private_message)
-
                     elif message.startswith("PRIVATE_FILE_NOTIFICATION\n"):
                         _, sender, file_name, file_path = message.split("\n")
                         self.handle_private_file_notification(sender, file_name, file_path)
-
+                    elif "HASH:" in message:
+                        content, received_hash = message.split("\nHASH:", 1)
+                        if Hashing.verify_content(content, received_hash):
+                            self.update_chat_display(content)
+                        else:
+                            self.update_chat_display("Message verification failed!")
                     else:
                         self.update_chat_display(message)
             except:
@@ -283,11 +288,45 @@ class ChatClient:
                 self.client_socket = None
             self.connected = False
 
+    #actual without altered hash test
     def send_message(self):
         message = self.message_entry.get().strip()
         if message:
-            self.client_socket.send(f"MESSAGE\n{message}".encode())
-            self.message_entry.delete(0, tk.END)
+            message_hash = Hashing.hash_content(message)
+            self.client_socket.send(f"MESSAGE\n{message}\nHASH:{message_hash}".encode())
+
+            try:
+                server_response = self.client_socket.recv(1024).decode()
+                if server_response.startswith("ERROR:"):
+                    messagebox.showerror("Message Error", server_response)
+                else:
+                    self.message_entry.delete(0, tk.END)
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to send message: {e}")
+
+    #test with altered hash:
+
+    # def send_message(self):
+    #     message = self.message_entry.get().strip()
+    #     if message:
+    #         # Compute the correct hash
+    #         message_hash = Hashing.hash_content(message)
+    #
+    #         # Simulate an incorrect hash
+    #         altered_hash = "INVALID_HASH"  # Replace the correct hash with an invalid one
+    #
+    #         # Send the message with the incorrect hash
+    #         self.client_socket.send(f"MESSAGE\n{message}\nHASH:{altered_hash}".encode())
+    #
+    #         try:
+    #             # Wait for the server's response
+    #             server_response = self.client_socket.recv(1024).decode()
+    #             if server_response.startswith("ERROR:"):
+    #                 messagebox.showerror("Message Error", server_response)
+    #             else:
+    #                 self.message_entry.delete(0, tk.END)
+    #         except Exception as e:
+    #             messagebox.showerror("Error", f"Failed to send message: {e}")
 
     def send_file(self):
         file_path = filedialog.askopenfilename()
@@ -299,10 +338,11 @@ class ChatClient:
                     return
 
                 file_name = os.path.basename(file_path)
-                self.client_socket.send(f"FILE\n{file_name}\n{file_size}".encode())
-
                 with open(file_path, 'rb') as file:
-                    self.client_socket.sendall(file.read())
+                    file_data = file.read()
+                file_hash = Hashing.hash_content(file_data)
+                self.client_socket.send(f"FILE\n{file_name}\n{file_size}\nHASH:{file_hash}".encode())
+                self.client_socket.sendall(file_data)
 
                 self.update_chat_display(f"File sent: {file_name}")
             except Exception as e:
@@ -510,3 +550,4 @@ class ChatClient:
 if __name__ == "__main__":
     client = ChatClient()
     client.run()
+
