@@ -3,11 +3,15 @@ from cryptography.hazmat.primitives import padding
 from cryptography.hazmat.backends import default_backend
 import os
 
+def generate_key_iv():
+    key = os.urandom(32)  # AES-256 key
+    iv = os.urandom(16)   # AES block size is 16 bytes
+    return key, iv
+    # iv make sure that identical plaintexts encrypt to different ciphertexts
 class BlockCipherHasher:
-    def __init__(self):
-        # Generate a random key and IV
-        self.key = os.urandom(32)  # AES-256 key
-        self.iv = os.urandom(16)   # AES block size is 16 bytes
+    def __init__(self, key, iv):
+        self.key = key
+        self.iv = iv
 
     def encrypt(self, data):
         # Pad the data to be a multiple of the block size
