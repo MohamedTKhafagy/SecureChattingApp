@@ -65,7 +65,7 @@ class ChatServer:
                     try:
                         # Receive registration details
                         username = client_socket.recv(1024).decode().strip()
-                        password = client_socket.recv(1024).decode().strip()
+                        hashed_password = client_socket.recv(1024).decode().strip()
                         print(f"Registration attempt for username: {username}")  # Debug print
 
                         # Check if username already exists
@@ -79,7 +79,7 @@ class ChatServer:
 
                         # Register new user
                         cursor.execute("INSERT INTO users (username, password) VALUES (?, ?)",
-                                       (username, password))
+                                       (username, hashed_password))
                         conn.commit()
                         conn.close()
 
@@ -95,7 +95,7 @@ class ChatServer:
 
                     username = client_socket.recv(1024).decode().strip()
 
-                    password = client_socket.recv(1024).decode().strip()
+                    hashed_password = client_socket.recv(1024).decode().strip()
 
                     conn = sqlite3.connect("ChatApp.db")
 
@@ -103,7 +103,7 @@ class ChatServer:
 
                     cursor.execute("SELECT username FROM users WHERE username = ? AND password = ?",
 
-                                   (username, password))
+                                   (username, hashed_password))
 
                     if cursor.fetchone():
 
@@ -281,6 +281,11 @@ class ChatServer:
             """)
             messages = cursor.fetchall()
             conn.close()
+
+            for msg in messages:
+                sender, content, sent_at = msg
+                computed_hash = Hashing.hash_content(content)
+
             return messages
         except Exception as e:
             print(f"Error loading historical messages: {e}")
@@ -337,7 +342,7 @@ class ChatServer:
 
     def handle_private_file_transfer(self, sender, client_socket, data):
         try:
-            _, recipient, file_name, file_size = data.split("\n")
+            _, recipient, file_name, file_size, received_hash = data.split("\n")
             file_size = int(file_size)
 
             # Check if recipient is online
@@ -348,12 +353,11 @@ class ChatServer:
 
                 recipient_socket = self.active_users[recipient]
 
-            # Create uploads directory if it doesn't exist
+            # Receive and save the file
             os.makedirs("uploads", exist_ok=True)
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             unique_filename = f"uploads/{timestamp}_{sender}_{file_name}"
 
-            # Receive and save file
             received_data = 0
             with open(unique_filename, 'wb') as file:
                 while received_data < file_size:
@@ -363,12 +367,21 @@ class ChatServer:
                     file.write(data)
                     received_data += len(data)
 
+            # Verify the file hash
+            with open(unique_filename, 'rb') as file:
+                file_data = file.read()
+            if not Hashing.verify_content(file_data, received_hash):
+                print(f"File hash mismatch for file: {file_name}")
+                client_socket.send("ERROR: File hash mismatch. File transfer failed.".encode())
+                os.remove(unique_filename)  # Remove the corrupted file
+                return
+
             # Notify recipient about the file
             try:
                 notification = f"PRIVATE_FILE_NOTIFICATION\n{sender}\n{file_name}\n{unique_filename}"
                 recipient_socket.send(notification.encode())
-            except:
-                print(f"Failed to notify recipient {recipient} about file")
+            except Exception as e:
+                print(f"Failed to notify recipient {recipient} about file: {e}")
 
         except Exception as e:
             print(f"Error in private file transfer: {e}")
@@ -389,21 +402,36 @@ class ChatServer:
                     print(f"Error sending chat response: {e}")
 
     def send_private_message(self, sender, recipient, message):
+        # Check for hash and verify if present
         if "\nHASH:" in message:
             content, received_hash = message.split("\nHASH:", 1)
             if not Hashing.verify_content(content, received_hash):
                 print(f"Private message from {sender} to {recipient} failed hash verification.")
+                # Notify the sender about the failure
+                try:
+                    self.active_users[sender].send("ERROR: Invalid message hash. Message not sent.".encode())
+                except Exception as e:
+                    print(f"Error notifying {sender} about hash failure: {e}")
                 return
         else:
-            content = message
+            content = message  # No hash provided; process as-is
+
+        # Forward the valid message to the recipient
         with self.active_users_lock:
             if recipient in self.active_users:
                 recipient_socket = self.active_users[recipient]
                 try:
-                    print(f"PRIVATE_MESSAGE:{sender}:{content}")
+                    print(f"Forwarding private message from {sender} to {recipient}: {content}")
                     recipient_socket.send(f"PRIVATE_MESSAGE:{sender}:{content}".encode())
                 except Exception as e:
-                    print(f"Error sending private message: {e}")
+                    print(f"Error sending private message to {recipient}: {e}")
+            else:
+                # Notify the sender that the recipient is not online
+                try:
+                    self.active_users[sender].send(f"ERROR: User {recipient} is not online.".encode())
+                except Exception as e:
+                    print(f"Error notifying {sender} about recipient being offline: {e}")
+
     def run(self):
         print("Server is running and waiting for connections...")
         while True:

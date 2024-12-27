@@ -43,5 +43,25 @@ def initialize_database():
     conn.close()
     print("Database initialized successfully.")
 
+#
+# def add_hash_column():
+#     try:
+#         conn = sqlite3.connect("ChatApp.db")
+#         cursor = conn.cursor()
+#
+#         # Add hash column to the broadcast_messages table
+#         cursor.execute("ALTER TABLE broadcast_messages ADD COLUMN hash TEXT")
+#         conn.commit()
+#         print("Hash column added successfully.")
+#     except sqlite3.OperationalError as e:
+#         if "duplicate column name: hash" in str(e).lower():
+#             print("Hash column already exists.")
+#         else:
+#             print(f"Error adding hash column: {e}")
+#     finally:
+#         conn.close()
+
+
 if __name__ == "__main__":
     initialize_database()
+    # add_hash_column()

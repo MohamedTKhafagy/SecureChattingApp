@@ -220,6 +220,7 @@ class ChatClient:
             return
 
         try:
+            hashed_password = Hashing.hash_content(password)
             # Send login command
             self.client_socket.send("login".encode())
             self.root.after(100)  # Small delay
@@ -228,7 +229,7 @@ class ChatClient:
             self.client_socket.send(username.encode())
             self.root.after(100)  # Small delay
 
-            self.client_socket.send(password.encode())
+            self.client_socket.send(hashed_password.encode())
 
             # Wait for response
             response = self.client_socket.recv(1024).decode()
@@ -266,6 +267,7 @@ class ChatClient:
             return
 
         try:
+            hashed_password = Hashing.hash_content(password)
             # Send registration command
             self.client_socket.send("register".encode())
             self.root.after(100)  # Small delay
@@ -274,7 +276,7 @@ class ChatClient:
             self.client_socket.send(username.encode())
             self.root.after(100)  # Small delay
 
-            self.client_socket.send(password.encode())
+            self.client_socket.send(hashed_password.encode())
 
             # Wait for response
             response = self.client_socket.recv(1024).decode()
@@ -431,21 +433,24 @@ class ChatClient:
                         return
 
                     file_name = os.path.basename(file_path)
-                    # Send file transfer initiation command
-                    self.client_socket.send(f"PRIVATE_FILE\n{with_user}\n{file_name}\n{file_size}".encode())
-
-                    # Send file data
                     with open(file_path, 'rb') as file:
-                        self.client_socket.sendall(file.read())
+                        file_data = file.read()
 
-                    # Add message to chat window
+                    # Compute the file hash
+                    file_hash = Hashing.hash_content(file_data)
+
+                    # Send file metadata with hash
+                    self.client_socket.send(
+                        f"PRIVATE_FILE\n{with_user}\n{file_name}\n{file_size}\nHASH:{file_hash}".encode())
+
+                    # Send the actual file data
+                    self.client_socket.sendall(file_data)
+
+                    # Notify the chat window
                     append_message(f"You sent file: {file_name}", 'you')
                 except Exception as e:
                     messagebox.showerror("Error", f"Failed to send file: {e}")
-
-
         # Add Send File button
-
 
         # Add a method to safely append messages
         def append_message(message, tag='sender'):
@@ -478,9 +483,16 @@ class ChatClient:
         def send_private_message():
             message = message_entry.get().strip()
             if message:
-                self.client_socket.send(f"PRIVATE_MESSAGE\n{with_user}\n{message}".encode())
+                # altered_hash = "INVALID_HASH"
+                # self.client_socket.send(f"PRIVATE_MESSAGE\n{with_user}\n{message}\nHASH:{altered_hash}".encode())
 
-                # Use the new append method with 'you' tag
+                # Compute the hash of the message
+                message_hash = Hashing.hash_content(message)
+
+                # Send the message with the hash
+                self.client_socket.send(f"PRIVATE_MESSAGE\n{with_user}\n{message}\nHASH:{message_hash}".encode())
+
+                # Display the message in the chat window
                 append_message(f"You: {message}", 'you')
                 message_entry.delete(0, tk.END)
 
