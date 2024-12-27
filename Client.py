@@ -294,7 +294,11 @@ class ChatClient:
     def send_message(self):
         message = self.message_entry.get().strip()
         if message:
+            # test valid and invalid hash
+
             message_hash = Hashing.hash_content(message)
+            # altered_hash = "INVALID_HASH"  # Replace the correct hash with an invalid one
+            # self.client_socket.send(f"MESSAGE\n{message}\nHASH:{altered_hash}".encode())
             self.client_socket.send(f"MESSAGE\n{message}\nHASH:{message_hash}".encode())
 
             try:
@@ -305,30 +309,6 @@ class ChatClient:
                     self.message_entry.delete(0, tk.END)
             except Exception as e:
                 messagebox.showerror("Error", f"Failed to send message: {e}")
-
-    #test with altered hash:
-
-    # def send_message(self):
-    #     message = self.message_entry.get().strip()
-    #     if message:
-    #         # Compute the correct hash
-    #         message_hash = Hashing.hash_content(message)
-    #
-    #         # Simulate an incorrect hash
-    #         altered_hash = "INVALID_HASH"  # Replace the correct hash with an invalid one
-    #
-    #         # Send the message with the incorrect hash
-    #         self.client_socket.send(f"MESSAGE\n{message}\nHASH:{altered_hash}".encode())
-    #
-    #         try:
-    #             # Wait for the server's response
-    #             server_response = self.client_socket.recv(1024).decode()
-    #             if server_response.startswith("ERROR:"):
-    #                 messagebox.showerror("Message Error", server_response)
-    #             else:
-    #                 self.message_entry.delete(0, tk.END)
-    #         except Exception as e:
-    #             messagebox.showerror("Error", f"Failed to send message: {e}")
 
     def send_file(self):
         file_path = filedialog.askopenfilename()
@@ -436,10 +416,9 @@ class ChatClient:
                     with open(file_path, 'rb') as file:
                         file_data = file.read()
 
-                    # Compute the file hash
+                    # test valid/invalid hash
                     file_hash = Hashing.hash_content(file_data)
-
-                    # Send file metadata with hash
+                    # altered_hash= "INVALID_HASH"
                     self.client_socket.send(
                         f"PRIVATE_FILE\n{with_user}\n{file_name}\n{file_size}\nHASH:{file_hash}".encode())
 

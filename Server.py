@@ -272,9 +272,8 @@ class ChatServer:
         try:
             conn = sqlite3.connect("ChatApp.db")
             cursor = conn.cursor()
-            # Get messages from the last 24 hours
             cursor.execute("""
-                SELECT sender, content, sent_at 
+                SELECT sender, content, hash, sent_at 
                 FROM broadcast_messages 
                 ORDER BY sent_at DESC 
                 LIMIT 50
@@ -282,11 +281,17 @@ class ChatServer:
             messages = cursor.fetchall()
             conn.close()
 
-            for msg in messages:
-                sender, content, sent_at = msg
+            verified_messages = []
+            for sender, content, stored_hash, sent_at in messages:
                 computed_hash = Hashing.hash_content(content)
+                if computed_hash != stored_hash:
+                    print(f"Message integrity check failed for: {content}")
+                    # Mark the message as compromised
+                    verified_messages.append((sender, "Message integrity compromised!", sent_at))
+                else:
+                    verified_messages.append((sender, content, sent_at))
 
-            return messages
+            return verified_messages
         except Exception as e:
             print(f"Error loading historical messages: {e}")
             return []
