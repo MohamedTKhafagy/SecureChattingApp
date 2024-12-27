@@ -13,16 +13,28 @@ def initialize_database():
         )
     """)
 
-    # Create the chat history table
+
     cursor.execute("""
-        CREATE TABLE IF NOT EXISTS chat_history (
+        CREATE TABLE IF NOT EXISTS messages (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             sender TEXT NOT NULL,
-            receiver TEXT NOT NULL,
-            message TEXT,
-            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+            receiver TEXT,
+            message_type TEXT NOT NULL,
+            content TEXT NOT NULL,
+            file_path TEXT,
+            sent_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (sender) REFERENCES users (username),
             FOREIGN KEY (receiver) REFERENCES users (username)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS broadcast_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            sender TEXT NOT NULL,
+            content TEXT NOT NULL,
+            sent_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (sender) REFERENCES users (username)
         )
     """)
 

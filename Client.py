@@ -68,6 +68,11 @@ class ChatClient:
         self.chat_display = ScrolledText(left_panel, wrap=tk.WORD, height=20)
         self.chat_display.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
 
+        # Configure tags for message formatting
+        self.chat_display.tag_config('timestamp', foreground='gray')
+        self.chat_display.tag_config('sender', foreground='blue')
+        self.chat_display.tag_config('message', foreground='black')
+
         # Message input area
         input_frame = ttk.Frame(left_panel)
         input_frame.pack(fill=tk.X, pady=(0, 10))
@@ -120,7 +125,15 @@ class ChatClient:
             try:
                 message = self.client_socket.recv(1024).decode()
                 if message:
-                    if message.startswith("ONLINE_USERS:"):
+                    if message == "HISTORY_START":
+                        self.update_chat_display("=== Past Broadcast Messages ===")
+                    elif message == "HISTORY_END":
+                        self.update_chat_display("=== End of Broadcast Messages ===")
+                    elif message.startswith("HISTORY_MSG\n"):
+                        # Remove the HISTORY_MSG prefix
+                        historical_message = message[11:]
+                        self.update_chat_display(historical_message)
+                    elif message.startswith("ONLINE_USERS:"):
                         self.update_online_users(message[13:].split(","))
                     elif message.startswith("CHAT_REQUEST:"):
                         sender = message.split(":")[1]
@@ -152,7 +165,36 @@ class ChatClient:
 
     def update_chat_display(self, message):
         self.chat_display.configure(state='normal')
-        self.chat_display.insert(tk.END, message + "\n")
+
+        # If it's a broadcast message with timestamp
+        if message.startswith('[20'):  # This checks if the message starts with a timestamp
+            # Insert with special formatting
+            self.chat_display.tag_config('timestamp', foreground='gray')
+            self.chat_display.tag_config('sender', foreground='blue')
+            self.chat_display.tag_config('message', foreground='black')
+
+            # Split the message into its components
+            timestamp_end = message.find(']')
+            if timestamp_end != -1:
+                timestamp = message[0:timestamp_end + 1]
+                rest = message[timestamp_end + 2:]  # Skip the space after ]
+                sender_end = rest.find(':')
+                if sender_end != -1:
+                    sender = rest[0:sender_end]
+                    msg_content = rest[sender_end + 2:]  # Skip the space after :
+
+                    # Insert each part with its own formatting
+                    self.chat_display.insert(tk.END, f"{timestamp} ", 'timestamp')
+                    self.chat_display.insert(tk.END, f"{sender}: ", 'sender')
+                    self.chat_display.insert(tk.END, f"{msg_content}\n", 'message')
+                else:
+                    self.chat_display.insert(tk.END, message + "\n")
+            else:
+                self.chat_display.insert(tk.END, message + "\n")
+        else:
+            # For system messages or other types of messages
+            self.chat_display.insert(tk.END, message + "\n")
+
         self.chat_display.configure(state='disabled')
         self.chat_display.see(tk.END)
 
@@ -185,6 +227,8 @@ class ChatClient:
                 self.username = username
                 self.show_chat_frame()
                 self.update_chat_display("Successfully logged in!")
+
+                # Create a separate thread for receiving messages
                 Thread(target=self.listen_for_messages, daemon=True).start()
             else:
                 messagebox.showerror("Login Failed", response)
@@ -387,6 +431,7 @@ class ChatClient:
         # Use the append_message method we added
         if hasattr(private_window, 'append_message'):
             private_window.append_message(f"{sender}: {message}")
+
 
     def logout(self):
         if self.connected:

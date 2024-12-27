@@ -1,6 +1,7 @@
 import socket
 import sqlite3
 from threading import Thread, Lock
+import time
 import os
 from datetime import datetime
 
@@ -90,29 +91,73 @@ class ChatServer:
                         client_socket.send(error_msg.encode())
 
                 elif command == "login":
+
                     username = client_socket.recv(1024).decode().strip()
+
                     password = client_socket.recv(1024).decode().strip()
-                    print(f"Login attempt for username: {username}")  # Debug print
 
                     conn = sqlite3.connect("ChatApp.db")
+
                     cursor = conn.cursor()
+
                     cursor.execute("SELECT username FROM users WHERE username = ? AND password = ?",
+
                                    (username, password))
 
                     if cursor.fetchone():
+
                         with self.active_users_lock:
+
                             if username in self.active_users:
                                 client_socket.send("Already logged in from another location".encode())
+
                                 conn.close()
+
                                 continue
+
                             self.active_users[username] = client_socket
 
+                        # Send login success message
+
                         client_socket.send("Login successful!".encode())
-                        print(f"Login successful for username: {username}")  # Debug print
+
+                        # Small delay to ensure login message is received
+
+                        time.sleep(0.1)
+
+                        # Send historical messages marker
+
+                        client_socket.send("HISTORY_START".encode())
+
+                        time.sleep(0.1)
+
+                        # Load and send historical messages
+
+                        historical_messages = self.load_historical_messages()
+
+                        for msg in historical_messages:
+                            sender, content, sent_at = msg
+
+                            formatted_msg = f"HISTORY_MSG\n[{sent_at}] {sender}: {content}"
+
+                            client_socket.send(formatted_msg.encode())
+
+                            time.sleep(0.05)  # Small delay between messages
+
+                        # Send end of history marker
+
+                        time.sleep(0.1)
+
+                        client_socket.send("HISTORY_END".encode())
+
                         conn.close()
-                        break  # Break to enter main message loop
+
+                        break
+
                     else:
+
                         client_socket.send("Invalid username or password".encode())
+
                         conn.close()
 
                 elif command == "quit":
@@ -184,13 +229,47 @@ class ChatServer:
                     continue
 
     def broadcast_message(self, sender, message):
+        timestamp = datetime.now()
+        formatted_message = f"[{timestamp.strftime('%Y-%m-%d %H:%M:%S')}] {sender}: {message}"
+
+        # Store message in database
+        try:
+            conn = sqlite3.connect("ChatApp.db")
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO broadcast_messages (sender, content, sent_at)
+                VALUES (?, ?, ?)
+            """, (sender, message, timestamp))
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            print(f"Error storing broadcast message: {e}")
+
+        # Send to all active users
         with self.active_users_lock:
             for username, sock in self.active_users.items():
-                if username != sender:
                     try:
-                        sock.send(f"{sender}: {message}".encode())
+                        sock.send(formatted_message.encode())
                     except:
                         continue
+
+    def load_historical_messages(self):
+        try:
+            conn = sqlite3.connect("ChatApp.db")
+            cursor = conn.cursor()
+            # Get messages from the last 24 hours
+            cursor.execute("""
+                SELECT sender, content, sent_at 
+                FROM broadcast_messages 
+                ORDER BY sent_at DESC 
+                LIMIT 50
+            """)
+            messages = cursor.fetchall()
+            conn.close()
+            return messages
+        except Exception as e:
+            print(f"Error loading historical messages: {e}")
+            return []
 
     def handle_file_transfer(self, client_socket, username):
         try:
