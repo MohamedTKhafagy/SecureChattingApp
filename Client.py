@@ -151,6 +151,11 @@ class ChatClient:
                         sender = parts[1]
                         private_message = ":".join(parts[2:])
                         self.display_private_message(sender, private_message)
+
+                    elif message.startswith("PRIVATE_FILE_NOTIFICATION\n"):
+                        _, sender, file_name, file_path = message.split("\n")
+                        self.handle_private_file_notification(sender, file_name, file_path)
+
                     else:
                         self.update_chat_display(message)
             except:
@@ -370,6 +375,37 @@ class ChatClient:
         scrollbar = tk.Scrollbar(private_chat_window, command=chat_display.yview)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         chat_display.config(yscrollcommand=scrollbar.set)
+        input_frame = ttk.Frame(private_chat_window)
+        input_frame.pack(fill=tk.X ,padx=(0,5))
+
+        #message_entry = ttk.Entry(input_frame)
+        #message_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
+
+        def send_private_file():
+            file_path = filedialog.askopenfilename()
+            if file_path:
+                try:
+                    file_size = os.path.getsize(file_path)
+                    if file_size > 10_000_000:  # 10MB limit
+                        messagebox.showerror("Error", "File is too large. Maximum size is 10MB.")
+                        return
+
+                    file_name = os.path.basename(file_path)
+                    # Send file transfer initiation command
+                    self.client_socket.send(f"PRIVATE_FILE\n{with_user}\n{file_name}\n{file_size}".encode())
+
+                    # Send file data
+                    with open(file_path, 'rb') as file:
+                        self.client_socket.sendall(file.read())
+
+                    # Add message to chat window
+                    append_message(f"You sent file: {file_name}", 'you')
+                except Exception as e:
+                    messagebox.showerror("Error", f"Failed to send file: {e}")
+
+
+        # Add Send File button
+
 
         # Add a method to safely append messages
         def append_message(message, tag='sender'):
@@ -394,7 +430,7 @@ class ChatClient:
 
         # Message input area
         input_frame = ttk.Frame(private_chat_window)
-        input_frame.pack(fill=tk.X, pady=(0, 10))
+        input_frame.pack(fill=tk.X, pady=(0, 5))
 
         message_entry = ttk.Entry(input_frame)
         message_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
@@ -409,6 +445,7 @@ class ChatClient:
                 message_entry.delete(0, tk.END)
 
         ttk.Button(input_frame, text="Send", command=send_private_message).pack(side=tk.LEFT)
+        ttk.Button(input_frame, text="Send File", command=send_private_file).pack(side=tk.LEFT)
         message_entry.bind("<Return>", lambda e: send_private_message())
 
         # Handle window close event
@@ -431,6 +468,29 @@ class ChatClient:
         # Use the append_message method we added
         if hasattr(private_window, 'append_message'):
             private_window.append_message(f"{sender}: {message}")
+
+    def handle_private_file_notification(self, sender, file_name, file_path):
+        # Find or create private chat window
+        private_window = self.open_private_chat(sender)
+
+        if hasattr(private_window, 'append_message'):
+            private_window.append_message(f"{sender} sent file: {file_name}")
+
+        # Ask user if they want to save the file
+        if messagebox.askyesno("File Received",
+                               f"Received file '{file_name}' from {sender}. Would you like to save it?"):
+            save_path = filedialog.asksaveasfilename(
+                defaultextension=os.path.splitext(file_name)[1],
+                initialfile=file_name
+            )
+            if save_path:
+                try:
+                    # Copy file from server's upload directory to user's chosen location
+                    import shutil
+                    shutil.copy2(file_path, save_path)
+                    messagebox.showinfo("Success", "File saved successfully!")
+                except Exception as e:
+                    messagebox.showerror("Error", f"Failed to save file: {e}")
 
 
     def logout(self):

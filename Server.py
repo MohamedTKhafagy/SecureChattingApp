@@ -175,6 +175,9 @@ class ChatServer:
                 if not data:
                     break
 
+                if data.startswith("PRIVATE_FILE\n"):
+                    self.handle_private_file_transfer(username, client_socket, data)
+
                 if data.startswith("MESSAGE\n"):
                     message = data[8:]
                     print(f"Broadcasting message from {username}: {message}")  # Debug print
@@ -309,6 +312,48 @@ class ChatServer:
             else:
                 return False
         return True
+
+    def handle_private_file_transfer(self, sender, client_socket, data):
+        try:
+            _, recipient, file_name, file_size = data.split("\n")
+            file_size = int(file_size)
+
+            # Check if recipient is online
+            with self.active_users_lock:
+                if recipient not in self.active_users:
+                    client_socket.send(f"Error: User {recipient} is not online.".encode())
+                    return
+
+                recipient_socket = self.active_users[recipient]
+
+            # Create uploads directory if it doesn't exist
+            os.makedirs("uploads", exist_ok=True)
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            unique_filename = f"uploads/{timestamp}_{sender}_{file_name}"
+
+            # Receive and save file
+            received_data = 0
+            with open(unique_filename, 'wb') as file:
+                while received_data < file_size:
+                    data = client_socket.recv(min(file_size - received_data, 8192))
+                    if not data:
+                        break
+                    file.write(data)
+                    received_data += len(data)
+
+            # Notify recipient about the file
+            try:
+                notification = f"PRIVATE_FILE_NOTIFICATION\n{sender}\n{file_name}\n{unique_filename}"
+                recipient_socket.send(notification.encode())
+            except:
+                print(f"Failed to notify recipient {recipient} about file")
+
+        except Exception as e:
+            print(f"Error in private file transfer: {e}")
+            try:
+                client_socket.send(f"File transfer failed: {str(e)}".encode())
+            except:
+                pass
 
     def handle_chat_response(self, sender, recipient, response):
         with self.active_users_lock:
