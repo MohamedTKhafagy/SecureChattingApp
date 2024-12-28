@@ -131,7 +131,7 @@ class ChatClient:
             try:
                 message = self.client_socket.recv(1024).decode()
                 if message:
-                    print(f"Received message: {message[:50]}...")  # Debug print
+                    #print(f"Received message: {message[:50]}...")  # Debug print
                     if message == "HISTORY_START":
                         self.update_chat_display("=== Past Broadcast Messages ===")
                     elif message == "HISTORY_END":
@@ -153,17 +153,6 @@ class ChatClient:
                             self.root.after(0, lambda r=recipient: self.open_private_chat(r))
                         else:
                             messagebox.showinfo("Chat Request", f"{recipient} refused the chat request.")
-                    #elif message.startswith("PRIVATE_MESSAGE:"):
-                     #   parts = message.split(":")
-                      #  sender = parts[1]
-                       # private_message = ":".join(parts[2:])
-                        #self.display_private_message(sender, private_message)
-
-                    #elif message.startswith("PRIVATE_FILE_NOTIFICATION\n"):
-                     #   _, sender, file_name, file_path = message.split("\n")
-                      #  self.handle_private_file_notification(sender, file_name, file_path)
-
-
                     if message.startswith("DH_INIT|"):
                         _, sender, public_key = message.split("|")
                         self.handle_dh_init(sender, public_key)
@@ -173,9 +162,8 @@ class ChatClient:
                     elif message.startswith("SECURE_MESSAGE|"):
                         _, sender, encrypted_message = message.split("|")
                         self.handle_secure_message(sender, encrypted_message)
-
-                    else:
-                        self.update_chat_display(message)
+                    #else:
+                     #   self.update_chat_display(message)
             except:
                 self.connected = False
                 break
