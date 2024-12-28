@@ -175,6 +175,27 @@ class ChatServer:
                 if not data:
                     break
 
+
+                if data.startswith("DH_INIT|"):
+                    _, recipient, public_key = data.split("|")
+                    print(public_key)
+                    if recipient in self.active_users:
+                        recipient_socket = self.active_users[recipient]
+                        recipient_socket.send(f"DH_INIT|{username}|{public_key}".encode())
+
+                elif data.startswith("DH_REPLY|"):
+                    _, recipient, public_key = data.split("|")
+                    if recipient in self.active_users:
+                        recipient_socket = self.active_users[recipient]
+                        recipient_socket.send(f"DH_REPLY|{username}|{public_key}".encode())
+
+                elif data.startswith("SECURE_MESSAGE|"):
+                    _, recipient, encrypted_message = data.split("|")
+                    print("Encrypted: ",encrypted_message)
+                    if recipient in self.active_users:
+                        recipient_socket = self.active_users[recipient]
+                        recipient_socket.send(f"SECURE_MESSAGE|{username}|{encrypted_message}".encode())
+
                 if data.startswith("PRIVATE_FILE\n"):
                     self.handle_private_file_transfer(username, client_socket, data)
 
