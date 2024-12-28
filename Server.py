@@ -9,7 +9,7 @@ from DB import *
 from KeyManagement import KeyManagement
 from rsa_utility import *
 
-
+#RSA
 class ChatServer:
     def __init__(self, host="0.0.0.0", port=5555):
         self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)

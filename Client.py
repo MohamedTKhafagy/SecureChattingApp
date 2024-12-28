@@ -10,7 +10,7 @@ import time
 import datetime
 from Hashing import *
 
-
+# Client
 class ChatClient:
     def __init__(self):
         # Main window setup

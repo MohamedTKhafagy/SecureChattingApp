@@ -1,5 +1,5 @@
 import sqlite3
-
+#Database
 def initialize_database():
     # Connect to SQLite database (or create it if it doesn't exist)
     conn = sqlite3.connect("ChatApp.db")

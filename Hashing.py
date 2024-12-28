@@ -1,5 +1,5 @@
 import hashlib
-
+#Hashing
 class Hashing:
     @staticmethod
     def hash_content(content):
