@@ -4,6 +4,8 @@ from threading import Thread, Lock
 import time
 import os
 from datetime import datetime
+from Hashing import *
+from DB import *
 
 
 class ChatServer:
@@ -19,37 +21,8 @@ class ChatServer:
         self.active_chats_lock = Lock()
 
         print(f"Server running on port {port}")
-        self.initialize_database()
+        initialize_database()
 
-    def initialize_database(self):
-        conn = sqlite3.connect("ChatApp.db")
-        cursor = conn.cursor()
-
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                username TEXT PRIMARY KEY,
-                password TEXT NOT NULL,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS messages (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                sender TEXT NOT NULL,
-                receiver TEXT,
-                message_type TEXT NOT NULL,
-                content TEXT NOT NULL,
-                file_path TEXT,
-                sent_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (sender) REFERENCES users (username),
-                FOREIGN KEY (receiver) REFERENCES users (username)
-            )
-        """)
-
-        conn.commit()
-        conn.close()
-        print("Database initialized successfully.")
 
     def handle_client(self, client_socket, addr):
         username = None
@@ -64,7 +37,7 @@ class ChatServer:
                     try:
                         # Receive registration details
                         username = client_socket.recv(1024).decode().strip()
-                        password = client_socket.recv(1024).decode().strip()
+                        hashed_password = client_socket.recv(1024).decode().strip()
                         print(f"Registration attempt for username: {username}")  # Debug print
 
                         # Check if username already exists
@@ -78,7 +51,7 @@ class ChatServer:
 
                         # Register new user
                         cursor.execute("INSERT INTO users (username, password) VALUES (?, ?)",
-                                       (username, password))
+                                       (username, hashed_password))
                         conn.commit()
                         conn.close()
 
@@ -94,7 +67,7 @@ class ChatServer:
 
                     username = client_socket.recv(1024).decode().strip()
 
-                    password = client_socket.recv(1024).decode().strip()
+                    hashed_password = client_socket.recv(1024).decode().strip()
 
                     conn = sqlite3.connect("ChatApp.db")
 
@@ -102,7 +75,7 @@ class ChatServer:
 
                     cursor.execute("SELECT username FROM users WHERE username = ? AND password = ?",
 
-                                   (username, password))
+                                   (username, hashed_password))
 
                     if cursor.fetchone():
 
@@ -202,7 +175,7 @@ class ChatServer:
                 if data.startswith("MESSAGE\n"):
                     message = data[8:]
                     print(f"Broadcasting message from {username}: {message}")  # Debug print
-                    self.broadcast_message(username, message)
+                    self.broadcast_message(username, message,client_socket)
 
                 elif data.startswith("FILE\n"):
                     self.handle_file_transfer(client_socket, username)
@@ -274,45 +247,67 @@ class ChatServer:
                 except:
                     continue
 
-    def broadcast_message(self, sender, message):
-        timestamp = datetime.now()
-        formatted_message = f"[{timestamp.strftime('%Y-%m-%d %H:%M:%S')}] {sender}: {message}"
+    def broadcast_message(self, sender, message, client_socket):
+        if "\nHASH:" in message:
+            content, received_hash = message.split("\nHASH:", 1)
+            # Verify the message hash
+            if not Hashing.verify_content(content, received_hash):
+                print(f"Message from {sender} failed hash verification.")
+                try:
+                    client_socket.send("ERROR: Invalid message hash. Message not broadcast.".encode())
+                except Exception as e:
+                    print(f"Error sending hash verification failure to {sender}: {e}")
+                return
+        else:
+            content = message
 
         # Store message in database
         try:
+            content, received_hash = message.split("\nHASH:", 1)
+            timestamp = datetime.now()
             conn = sqlite3.connect("ChatApp.db")
             cursor = conn.cursor()
             cursor.execute("""
-                INSERT INTO broadcast_messages (sender, content, sent_at)
-                VALUES (?, ?, ?)
-            """, (sender, message, timestamp))
+                    INSERT INTO broadcast_messages (sender, content, sent_at, hash)
+                    VALUES (?, ?, ?, ?)
+                """, (sender, content, timestamp, received_hash))
             conn.commit()
             conn.close()
-        except Exception as e:
-            print(f"Error storing broadcast message: {e}")
 
-        # Send to all active users
-        with self.active_users_lock:
-            for username, sock in self.active_users.items():
+            formatted_message = f"[{timestamp.strftime('%Y-%m-%d %H:%M:%S')}] {sender}: {content}"
+            with self.active_users_lock:
+                for username, sock in self.active_users.items():
                     try:
                         sock.send(formatted_message.encode())
-                    except:
-                        continue
+                    except Exception as e:
+                        print(f"Error sending to {username}: {e}")
+        except Exception as e:
+            print(f"Error storing broadcast message: {e}")
 
     def load_historical_messages(self):
         try:
             conn = sqlite3.connect("ChatApp.db")
             cursor = conn.cursor()
-            # Get messages from the last 24 hours
             cursor.execute("""
-                SELECT sender, content, sent_at 
+                SELECT sender, content, hash, sent_at 
                 FROM broadcast_messages 
                 ORDER BY sent_at DESC 
                 LIMIT 50
             """)
             messages = cursor.fetchall()
             conn.close()
-            return messages
+
+            verified_messages = []
+            for sender, content, stored_hash, sent_at in messages:
+                computed_hash = Hashing.hash_content(content)
+                if computed_hash != stored_hash:
+                    print(f"Message integrity check failed for: {content}")
+                    # Mark the message as compromised
+                    verified_messages.append((sender, "Message integrity compromised!", sent_at))
+                else:
+                    verified_messages.append((sender, content, sent_at))
+
+            return verified_messages
         except Exception as e:
             print(f"Error loading historical messages: {e}")
             return []
@@ -335,7 +330,7 @@ class ChatServer:
                     file.write(data)
                     received_data += len(data)
 
-            self.broadcast_message(username, f"shared a file: {file_name}")
+            self.broadcast_message(username, f"shared a file: {file_name}",client_socket)
 
         except Exception as e:
             print(f"File transfer error: {e}")

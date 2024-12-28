@@ -6,6 +6,7 @@ from tkinter.scrolledtext import ScrolledText
 from KeyManagement import *
 import time
 import datetime
+from Hashing import *
 
 
 class ChatClient:
@@ -153,7 +154,7 @@ class ChatClient:
                             self.root.after(0, lambda r=recipient: self.open_private_chat(r))
                         else:
                             messagebox.showinfo("Chat Request", f"{recipient} refused the chat request.")
-                    if message.startswith("DH_INIT|"):
+                    elif message.startswith("DH_INIT|"):
                         _, sender, public_key = message.split("|")
                         self.handle_dh_init(sender, public_key)
                     elif message.startswith("DH_REPLY|"):
@@ -165,8 +166,8 @@ class ChatClient:
                     elif message.startswith("SECURE_FILE|"):
                         _, sender, file_name, file_size = message.split("|")
                         self.handle_secure_file(sender, file_name, int(file_size))
-                    #else:
-                     #   self.update_chat_display(message)
+                    else:
+                        self.update_chat_display(message)
             except:
                 self.connected = False
                 break
@@ -224,6 +225,7 @@ class ChatClient:
             return
 
         try:
+            hashed_password = Hashing.hash_content(password)
             # Send login command
             self.client_socket.send("login".encode())
             self.root.after(100)  # Small delay
@@ -232,7 +234,7 @@ class ChatClient:
             self.client_socket.send(username.encode())
             self.root.after(100)  # Small delay
 
-            self.client_socket.send(password.encode())
+            self.client_socket.send(hashed_password.encode())
 
             # Wait for response
             response = self.client_socket.recv(1024).decode()
@@ -270,6 +272,7 @@ class ChatClient:
             return
 
         try:
+            hashed_password = Hashing.hash_content(password)
             # Send registration command
             self.client_socket.send("register".encode())
             self.root.after(100)  # Small delay
@@ -278,7 +281,7 @@ class ChatClient:
             self.client_socket.send(username.encode())
             self.root.after(100)  # Small delay
 
-            self.client_socket.send(password.encode())
+            self.client_socket.send(hashed_password.encode())
 
             # Wait for response
             response = self.client_socket.recv(1024).decode()
@@ -295,8 +298,21 @@ class ChatClient:
     def send_message(self):
         message = self.message_entry.get().strip()
         if message:
-            self.client_socket.send(f"MESSAGE\n{message}".encode())
-            self.message_entry.delete(0, tk.END)
+            # test valid and invalid hash
+
+            message_hash = Hashing.hash_content(message)
+            # altered_hash = "INVALID_HASH"  # Replace the correct hash with an invalid one
+            # self.client_socket.send(f"MESSAGE\n{message}\nHASH:{altered_hash}".encode())
+            self.client_socket.send(f"MESSAGE\n{message}\nHASH:{message_hash}".encode())
+
+            try:
+                server_response = self.client_socket.recv(1024).decode()
+                if server_response.startswith("ERROR:"):
+                    messagebox.showerror("Message Error", server_response)
+                else:
+                    self.message_entry.delete(0, tk.END)
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to send message: {e}")
 
     def send_file(self):
         file_path = filedialog.askopenfilename()
