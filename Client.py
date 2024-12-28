@@ -17,7 +17,7 @@ class ChatClient:
 
         self.connected = False
         self.username = None
-        self.client_socket = None  # Initialize as None but don't create socket yet
+        self.client_socket = None
 
         # Create main container
         self.main_container = ttk.Frame(self.root, padding="10")
@@ -29,8 +29,10 @@ class ChatClient:
 
         # Show login frame initially
         self.show_login_frame()
-        self.private_chat_windows = {}
 
+        # Track chat windows and states
+        self.private_chat_windows = {}
+        self.pending_chat_requests = set()  # Track pending requests
         self.secure_chat = SecureChatManager()
         self.secure_chat_ready = {}
 
@@ -151,15 +153,15 @@ class ChatClient:
                             self.root.after(0, lambda r=recipient: self.open_private_chat(r))
                         else:
                             messagebox.showinfo("Chat Request", f"{recipient} refused the chat request.")
-                    elif message.startswith("PRIVATE_MESSAGE:"):
-                        parts = message.split(":")
-                        sender = parts[1]
-                        private_message = ":".join(parts[2:])
-                        self.display_private_message(sender, private_message)
+                    #elif message.startswith("PRIVATE_MESSAGE:"):
+                     #   parts = message.split(":")
+                      #  sender = parts[1]
+                       # private_message = ":".join(parts[2:])
+                        #self.display_private_message(sender, private_message)
 
-                    elif message.startswith("PRIVATE_FILE_NOTIFICATION\n"):
-                        _, sender, file_name, file_path = message.split("\n")
-                        self.handle_private_file_notification(sender, file_name, file_path)
+                    #elif message.startswith("PRIVATE_FILE_NOTIFICATION\n"):
+                     #   _, sender, file_name, file_path = message.split("\n")
+                      #  self.handle_private_file_notification(sender, file_name, file_path)
 
 
                     if message.startswith("DH_INIT|"):
@@ -332,33 +334,60 @@ class ChatClient:
 
         recipient = self.users_listbox.get(selected[0])
 
-        # Check if we already have a shared key
-        if recipient in self.secure_chat.shared_keys:
-            self.open_private_chat(recipient)
+        # Check if chat is already pending or window exists
+        if recipient in self.pending_chat_requests:
+            messagebox.showinfo("Info", "Chat request already pending")
             return
 
-        # Initialize DH and send public key
-        public_key = self.secure_chat.initialize_dh()
-        self.client_socket.send(f"DH_INIT|{recipient}|{public_key.decode()}".encode())
-        print(f"Sent DH_INIT to {recipient}")
+        if recipient in self.private_chat_windows and self.private_chat_windows[recipient].winfo_exists():
+            self.private_chat_windows[recipient].lift()
+            return
+
+        # Send chat request and mark as pending
+        self.client_socket.send(f"START_CHAT\n{recipient}".encode())
+        self.pending_chat_requests.add(recipient)
 
     def handle_chat_request(self, sender):
-        # Show a dialog to accept or refuse the chat request
-        response = messagebox.askyesno("Chat Request",f"{sender} wants to start a private chat. Accept?")
+        # If we already have a chat window with this user, just focus it
+        if sender in self.private_chat_windows and self.private_chat_windows[sender].winfo_exists():
+            self.private_chat_windows[sender].lift()
+            return
 
-        # Send response back to server
+        # If we have a pending request to this user, handle as automatic accept
+        # to avoid duplicate requests
+        if sender in self.pending_chat_requests:
+            self.client_socket.send(f"CHAT_RESPONSE\n{sender}\naccept".encode())
+            public_key = self.secure_chat.initialize_dh()
+            self.client_socket.send(f"DH_INIT|{sender}|{public_key.decode()}".encode())
+            return
+
+        # Otherwise, show the request dialog
+        response = messagebox.askyesno("Chat Request",
+                                       f"{sender} wants to start a secure private chat. Accept?")
+
         if response:
             self.client_socket.send(f"CHAT_RESPONSE\n{sender}\naccept".encode())
-            # Open a new window or tab for private chat
-            self.open_private_chat(sender)
+            public_key = self.secure_chat.initialize_dh()
+            self.client_socket.send(f"DH_INIT|{sender}|{public_key.decode()}".encode())
         else:
             self.client_socket.send(f"CHAT_RESPONSE\n{sender}\nrefuse".encode())
 
     def open_private_chat(self, with_user):
-        # Create a new top-level window for private chat
+        # Check for existing window
+        if with_user in self.private_chat_windows:
+            window = self.private_chat_windows[with_user]
+            if window.winfo_exists():
+                window.lift()
+                return window
+
+        # Create new window
         private_chat_window = tk.Toplevel(self.root)
         private_chat_window.title(f"Secure Chat with {with_user}")
         private_chat_window.geometry("500x400")
+
+        # Add close handler
+        private_chat_window.protocol("WM_DELETE_WINDOW",
+                                     lambda: self.handle_chat_window_close(with_user, private_chat_window))
 
         chat_display = ScrolledText(private_chat_window, wrap=tk.WORD, height=20)
         chat_display.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
@@ -371,100 +400,71 @@ class ChatClient:
 
         def send_secure_message():
             message = message_entry.get().strip()
-            if message:
-                if with_user in self.secure_chat.shared_keys:
+            if message and with_user in self.secure_chat.shared_keys:
+                try:
                     shared_key = self.secure_chat.shared_keys[with_user]
-                    try:
-                        encrypted_message = self.secure_chat.encrypt_message(message, shared_key)
-                        self.client_socket.send(f"SECURE_MESSAGE|{with_user}|{encrypted_message}".encode())
-                        # Display sent message in chat window
-                        chat_display.configure(state='normal')
-                        chat_display.insert(tk.END, f"You: {message}\n")
-                        chat_display.configure(state='disabled')
-                        chat_display.see(tk.END)
-                        message_entry.delete(0, tk.END)
-                    except Exception as e:
-                        print(f"Encryption error: {e}")
-                        messagebox.showerror("Error", "Failed to encrypt message")
-                else:
-                    messagebox.showerror("Error", "Secure chat not established")
+                    encrypted_message = self.secure_chat.encrypt_message(message, shared_key)
+                    self.client_socket.send(f"SECURE_MESSAGE|{with_user}|{encrypted_message}".encode())
+
+                    chat_display.configure(state='normal')
+                    chat_display.insert(tk.END, f"You: {message}\n")
+                    chat_display.configure(state='disabled')
+                    chat_display.see(tk.END)
+                    message_entry.delete(0, tk.END)
+                except Exception as e:
+                    print(f"Error sending message: {e}")
+                    messagebox.showerror("Error", "Failed to send message")
+            elif not with_user in self.secure_chat.shared_keys:
+                messagebox.showinfo("Info", "Secure chat connection not yet established")
 
         send_button = ttk.Button(input_frame, text="Send", command=send_secure_message)
         send_button.pack(side=tk.LEFT)
         message_entry.bind("<Return>", lambda e: send_secure_message())
 
-        # Store the chat display widget for this conversation
+        # Store window and display
         private_chat_window.chat_display = chat_display
         self.private_chat_windows[with_user] = private_chat_window
 
+        # Remove from pending requests if exists
+        if with_user in self.pending_chat_requests:
+            self.pending_chat_requests.remove(with_user)
+
         return private_chat_window
-
-    def display_private_message(self, sender, message):
-        # Find or create private chat window
-        private_window = self.open_private_chat(sender)
-
-        # Use the append_message method we added
-        if hasattr(private_window, 'append_message'):
-            private_window.append_message(f"{sender}: {message}")
-
-    def handle_private_file_notification(self, sender, file_name, file_path):
-        # Find or create private chat window
-        private_window = self.open_private_chat(sender)
-
-        if hasattr(private_window, 'append_message'):
-            private_window.append_message(f"{sender} sent file: {file_name}")
-
-        # Ask user if they want to save the file
-        if messagebox.askyesno("File Received",
-                               f"Received file '{file_name}' from {sender}. Would you like to save it?"):
-            save_path = filedialog.asksaveasfilename(
-                defaultextension=os.path.splitext(file_name)[1],
-                initialfile=file_name
-            )
-            if save_path:
-                try:
-                    # Copy file from server's upload directory to user's chosen location
-                    import shutil
-                    shutil.copy2(file_path, save_path)
-                    messagebox.showinfo("Success", "File saved successfully!")
-                except Exception as e:
-                    messagebox.showerror("Error", f"Failed to save file: {e}")
 
     def handle_dh_init(self, sender, public_key_str):
         try:
             print(f"Received DH_INIT from {sender}")
-            our_public_key = self.secure_chat.initialize_dh()
-            peer_public_key = public_key_str.encode()
+            if sender not in self.secure_chat.shared_keys:
+                our_public_key = self.secure_chat.initialize_dh()
+                peer_public_key = public_key_str.encode()
 
-            # Compute shared key
-            shared_key = self.secure_chat.compute_shared_key(peer_public_key)
-            self.secure_chat.shared_keys[sender] = shared_key
-            print(f"Computed shared key for {sender}")
+                # Compute shared key
+                shared_key = self.secure_chat.compute_shared_key(peer_public_key)
+                self.secure_chat.shared_keys[sender] = shared_key
 
-            # Send our public key back
-            self.client_socket.send(f"DH_REPLY|{sender}|{our_public_key.decode()}".encode())
-            print(f"Sent DH_REPLY to {sender}")
+                # Send our public key back
+                self.client_socket.send(f"DH_REPLY|{sender}|{our_public_key.decode()}".encode())
 
-            # Open chat window after key exchange
-            self.root.after(0, lambda: self.open_private_chat(sender))
+                # Open chat window if needed
+                self.root.after(0, lambda: self.open_private_chat(sender))
         except Exception as e:
-            print(f"Error in handle_dh_init: {e}")
+            print(f"Error in DH init: {e}")
 
     def handle_dh_reply(self, sender, public_key_str):
         try:
             print(f"Received DH_REPLY from {sender}")
-            peer_public_key = public_key_str.encode()
-            shared_key = self.secure_chat.compute_shared_key(peer_public_key)
-            self.secure_chat.shared_keys[sender] = shared_key
-            print(f"Computed shared key for {sender}")
+            if sender not in self.secure_chat.shared_keys:
+                peer_public_key = public_key_str.encode()
+                shared_key = self.secure_chat.compute_shared_key(peer_public_key)
+                self.secure_chat.shared_keys[sender] = shared_key
 
-            # Open chat window after key exchange
-            self.root.after(0, lambda: self.open_private_chat(sender))
+                # Open chat window if needed
+                self.root.after(0, lambda: self.open_private_chat(sender))
         except Exception as e:
-            print(f"Error in handle_dh_reply: {e}")
+            print(f"Error in DH reply: {e}")
 
     def display_private_message(self, sender, message):
-        if sender not in self.private_chat_windows:
+        if sender not in self.private_chat_windows or not self.private_chat_windows[sender].winfo_exists():
             self.open_private_chat(sender)
 
         window = self.private_chat_windows[sender]
@@ -473,21 +473,27 @@ class ChatClient:
             window.chat_display.insert(tk.END, f"{sender}: {message}\n")
             window.chat_display.configure(state='disabled')
             window.chat_display.see(tk.END)
-            window.lift()  # Bring window to front
+            window.lift()
+
+    def handle_chat_window_close(self, with_user, window):
+        if with_user in self.private_chat_windows:
+            del self.private_chat_windows[with_user]
+        if with_user in self.secure_chat.shared_keys:
+            del self.secure_chat.shared_keys[with_user]
+        if with_user in self.pending_chat_requests:
+            self.pending_chat_requests.remove(with_user)
+        window.destroy()
 
     def handle_secure_message(self, sender, encrypted_message):
         try:
             if sender in self.secure_chat.shared_keys:
                 shared_key = self.secure_chat.shared_keys[sender]
                 decrypted_message = self.secure_chat.decrypt_message(encrypted_message, shared_key)
-                print(f"Decrypted message from {sender}")
                 self.display_private_message(sender, decrypted_message)
             else:
                 print(f"No shared key for {sender}")
-                messagebox.showerror("Error", "Received message without encryption key")
         except Exception as e:
             print(f"Error handling secure message: {e}")
-
 
     def logout(self):
         if self.connected:
