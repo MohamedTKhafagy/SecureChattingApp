@@ -13,20 +13,13 @@ def initialize_database():
         )
     """)
 
-
+    # Create the public_keys table
     cursor.execute("""
-        CREATE TABLE IF NOT EXISTS messages (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            sender TEXT NOT NULL,
-            receiver TEXT,
-            message_type TEXT NOT NULL,
-            content TEXT NOT NULL,
-            file_path TEXT,
-            sent_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (sender) REFERENCES users (username),
-            FOREIGN KEY (receiver) REFERENCES users (username)
-        )
-    """)
+           CREATE TABLE IF NOT EXISTS public_keys (
+               username TEXT PRIMARY KEY,
+               public_key TEXT NOT NULL
+           )
+       """)
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS broadcast_messages (
@@ -34,10 +27,10 @@ def initialize_database():
             sender TEXT NOT NULL,
             content TEXT NOT NULL,
             sent_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            hash TEXT,
             FOREIGN KEY (sender) REFERENCES users (username)
         )
     """)
-
     # Commit changes and close the connection
     conn.commit()
     conn.close()

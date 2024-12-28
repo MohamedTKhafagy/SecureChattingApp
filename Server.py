@@ -6,6 +6,8 @@ import os
 from datetime import datetime
 from Hashing import *
 from DB import *
+from KeyManagement import KeyManagement
+from rsa_utility import *
 
 
 class ChatServer:
@@ -133,6 +135,14 @@ class ChatServer:
 
                         conn.close()
 
+                elif command == "register_key":
+                    try:
+                        public_key = client_socket.recv(2048).decode()
+                        self.register_public_key(username, public_key)
+                        client_socket.send("Public key registered successfully.".encode())
+                    except Exception as e:
+                        client_socket.send(f"Error registering public key: {str(e)}".encode())
+
                 elif command == "quit":
                     break
 
@@ -148,8 +158,12 @@ class ChatServer:
                 if not data:
                     break
 
+                if data.startswith("BROADCAST_MESSAGE\n"):
+                    message = data[len("BROADCAST_MESSAGE\n"):]
+                    print(f"Broadcasting message from {username}: {message}")  # Debug print
+                    self.broadcast_message(username, message, client_socket)
 
-                if data.startswith("DH_INIT|"):
+                elif data.startswith("DH_INIT|"):
                     _, recipient, public_key = data.split("|")
                     print(public_key)
                     if recipient in self.active_users:
@@ -237,6 +251,22 @@ class ChatServer:
             self.broadcast_online_users()
         client_socket.close()
 
+    def register_public_key(self, username, public_key):
+        """
+        Store or update a user's public key in the database.
+        """
+        try:
+            conn = sqlite3.connect("ChatApp.db")
+            cursor = conn.cursor()
+            cursor.execute("""
+                   INSERT OR REPLACE INTO public_keys (username, public_key) VALUES (?, ?)
+               """, (username, public_key))
+            conn.commit()
+            conn.close()
+            print(f"Public key registered for {username}.")
+        except Exception as e:
+            print(f"Error registering public key for {username}: {e}")
+
     def broadcast_online_users(self):
         with self.active_users_lock:
             users_list = ",".join(self.active_users.keys())
@@ -250,34 +280,44 @@ class ChatServer:
     def broadcast_message(self, sender, message, client_socket):
         if "\nHASH:" in message:
             content, received_hash = message.split("\nHASH:", 1)
+            keyManager = KeyManagement()
+            private_key = keyManager.load_server_private_key()
+            decrypted_content= decrypt_message(private_key,content)
             # Verify the message hash
-            if not Hashing.verify_content(content, received_hash):
+            if not Hashing.verify_content(decrypted_content, received_hash):
                 print(f"Message from {sender} failed hash verification.")
                 try:
                     client_socket.send("ERROR: Invalid message hash. Message not broadcast.".encode())
                 except Exception as e:
                     print(f"Error sending hash verification failure to {sender}: {e}")
                 return
+            else:
+                client_socket.send("Broadcasted".encode())
         else:
             content = message
 
         # Store message in database
         try:
             content, received_hash = message.split("\nHASH:", 1)
+            keyManager = KeyManagement()
+            private_key = keyManager.load_server_private_key()
+            decrypted_content = decrypt_message(private_key, content)
             timestamp = datetime.now()
             conn = sqlite3.connect("ChatApp.db")
             cursor = conn.cursor()
             cursor.execute("""
                     INSERT INTO broadcast_messages (sender, content, sent_at, hash)
                     VALUES (?, ?, ?, ?)
-                """, (sender, content, timestamp, received_hash))
+                """, (sender, decrypted_content, timestamp, received_hash))
             conn.commit()
             conn.close()
 
-            formatted_message = f"[{timestamp.strftime('%Y-%m-%d %H:%M:%S')}] {sender}: {content}"
+            formatted_message = f"[{timestamp.strftime('%Y-%m-%d %H:%M:%S')}] {sender}: {decrypted_content}"
             with self.active_users_lock:
                 for username, sock in self.active_users.items():
                     try:
+                        #receiver_key = keyManager.retrieve_public_key(username)
+                        #encrypted_message = encrypt_messageByPublic(receiver_key, formatted_message)
                         sock.send(formatted_message.encode())
                     except Exception as e:
                         print(f"Error sending to {username}: {e}")

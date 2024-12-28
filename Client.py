@@ -3,6 +3,8 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 from threading import Thread
 from tkinter.scrolledtext import ScrolledText
+from rsa_utility import *
+
 from KeyManagement import *
 import time
 import datetime
@@ -87,9 +89,9 @@ class ChatClient:
 
         self.message_entry = ttk.Entry(input_frame)
         self.message_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
-        self.message_entry.bind("<Return>", lambda e: self.send_message())
+        self.message_entry.bind("<Return>", lambda e: self.send_broadcast_message())
 
-        ttk.Button(input_frame, text="Send", command=self.send_message).pack(side=tk.LEFT)
+        ttk.Button(input_frame, text="Send", command=self.send_broadcast_message).pack(side=tk.LEFT)
 
         # Action buttons
         actions_frame = ttk.Frame(left_panel)
@@ -133,6 +135,19 @@ class ChatClient:
                 message = self.client_socket.recv(1024).decode()
                 if message:
                     #print(f"Received message: {message[:50]}...")  # Debug print
+                    if message.startswith("BROADCAST_MESSAGE\n"):
+                        encrypted_message = message[len("BROADCAST_MESSAGE\n"):]
+                        try:
+                            print("Hello")
+                            keyManager = KeyManagement()
+                            private_key = keyManager.load_private_key(self.username)
+                            decrypted_message = decrypt_message(private_key, encrypted_message)
+                            # Log the encrypted and decrypted messages
+                            print(f"Received (Encrypted): {encrypted_message}")
+                            print(f"Decrypted Broadcast: {decrypted_message}")
+                            self.update_chat_display(decrypted_message)
+                        except Exception as e:
+                            print(f"Error decrypting broadcast message: {e}")
                     if message == "HISTORY_START":
                         self.update_chat_display("=== Past Broadcast Messages ===")
                     elif message == "HISTORY_END":
@@ -172,6 +187,23 @@ class ChatClient:
                 self.connected = False
                 break
 
+    def send_broadcast_message(self):
+        message = self.message_entry.get().strip()
+        if message:
+            keyManager = KeyManagement()
+            server_public_key =  keyManager.load_server_public_key()
+            print(server_public_key)
+            message_hash = Hashing.hash_content(message)
+            encrypted_message = encrypt_messageByPublic(message, server_public_key)
+            self.client_socket.send(f"BROADCAST_MESSAGE\n{encrypted_message}\nHASH:{message_hash}".encode())
+            try:
+                server_response = self.client_socket.recv(1024).decode()
+                if server_response.startswith("ERROR:"):
+                    messagebox.showerror("Message Error", server_response)
+                else:
+                    self.message_entry.delete(0, tk.END)
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to send message: {e}")
     def update_online_users(self, users):
         self.users_listbox.delete(0, tk.END)
         for user in users:
@@ -212,6 +244,28 @@ class ChatClient:
 
         self.chat_display.configure(state='disabled')
         self.chat_display.see(tk.END)
+
+    def save_user_keys(self, username, private_key, public_key):
+        """
+        Saves RSA keys to files named after the username.
+        """
+        # Create a keys directory if it doesn't exist
+        keys_dir = "user_keys"
+        os.makedirs(keys_dir, exist_ok=True)
+
+        # Generate filenames based on username
+        private_key_file = os.path.join(keys_dir, f"{username}_private.pem")
+        public_key_file = os.path.join(keys_dir, f"{username}_public.pem")
+
+        # Save private key (expects bytes)
+        with open(private_key_file, 'wb') as f:
+            f.write(private_key)
+
+        # Save public key (expects bytes)
+        with open(public_key_file, 'wb') as f:
+            f.write(public_key)
+
+        return private_key_file, public_key_file
 
     def login(self):
         if not self.connect_to_server():
@@ -287,6 +341,16 @@ class ChatClient:
             response = self.client_socket.recv(1024).decode()
             messagebox.showinfo("Registration", response)
 
+            if "successfully" in response.lower():
+                # Generate and save keys
+                KeyManager = KeyManagement()
+                private_key, public_key = KeyManager.generate_rsa_keys()  # Now returns bytes
+                self.save_user_keys(username, private_key, public_key)  # Pass bytes
+
+                # Send public key to server
+                self.client_socket.send("register_key".encode())
+                self.client_socket.send(public_key)  # Send bytes directly, no need to encode
+
         except Exception as e:
             messagebox.showerror("Error", f"Registration failed: {e}")
         finally:
@@ -294,6 +358,8 @@ class ChatClient:
                 self.client_socket.close()
                 self.client_socket = None
             self.connected = False
+
+
 
     def send_message(self):
         message = self.message_entry.get().strip()
