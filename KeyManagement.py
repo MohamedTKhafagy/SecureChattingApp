@@ -69,6 +69,30 @@ class SecureChatManager:
 
         return decryptor.update(ciphertext).decode() + decryptor.finalize().decode()
 
+    def encrypt_file(self, file_data, shared_key):
+        iv = os.urandom(12)
+        encryptor = Cipher(
+            algorithms.AES(shared_key),
+            modes.GCM(iv),
+            backend=default_backend()
+        ).encryptor()
+
+        ciphertext = encryptor.update(file_data) + encryptor.finalize()
+        return iv + encryptor.tag + ciphertext
+
+    def decrypt_file(self, encrypted_data, shared_key):
+        iv = encrypted_data[:12]
+        tag = encrypted_data[12:28]
+        ciphertext = encrypted_data[28:]
+
+        decryptor = Cipher(
+            algorithms.AES(shared_key),
+            modes.GCM(iv, tag),
+            backend=default_backend()
+        ).decryptor()
+
+        return decryptor.update(ciphertext) + decryptor.finalize()
+
 class KeyManagement:
     def __init__(self, db_path="MailSecurity.db"):
         self.db_path = db_path

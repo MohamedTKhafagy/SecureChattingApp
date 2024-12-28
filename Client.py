@@ -4,7 +4,8 @@ from tkinter import ttk, messagebox, filedialog
 from threading import Thread
 from tkinter.scrolledtext import ScrolledText
 from KeyManagement import *
-
+import time
+import datetime
 
 
 class ChatClient:
@@ -162,6 +163,9 @@ class ChatClient:
                     elif message.startswith("SECURE_MESSAGE|"):
                         _, sender, encrypted_message = message.split("|")
                         self.handle_secure_message(sender, encrypted_message)
+                    elif message.startswith("SECURE_FILE|"):
+                        _, sender, file_name, file_size = message.split("|")
+                        self.handle_secure_file(sender, file_name, int(file_size))
                     #else:
                      #   self.update_chat_display(message)
             except:
@@ -360,6 +364,47 @@ class ChatClient:
         else:
             self.client_socket.send(f"CHAT_RESPONSE\n{sender}\nrefuse".encode())
 
+    def handle_secure_file(self, sender, file_name, file_size):
+        try:
+            if sender not in self.secure_chat.shared_keys:
+                print(f"No shared key for {sender}")
+                return
+
+            # Receive encrypted file data
+            encrypted_data = b""
+            remaining = file_size
+            while remaining > 0:
+                chunk = self.client_socket.recv(min(remaining, 8192))
+                if not chunk:
+                    break
+                encrypted_data += chunk
+                remaining -= len(chunk)
+
+            # Decrypt file
+            shared_key = self.secure_chat.shared_keys[sender]
+            decrypted_data = self.secure_chat.decrypt_file(encrypted_data, shared_key)
+
+            # Save file
+            os.makedirs("downloads", exist_ok=True)
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            save_path = os.path.join("downloads", f"{timestamp}_{file_name}")
+
+            with open(save_path, 'wb') as file:
+                file.write(decrypted_data)
+
+            # Display notification in chat window
+            if sender in self.private_chat_windows:
+                window = self.private_chat_windows[sender]
+                if hasattr(window, 'chat_display'):
+                    window.chat_display.configure(state='normal')
+                    window.chat_display.insert(tk.END, f"{sender} sent file: {file_name} (saved to {save_path})\n")
+                    window.chat_display.configure(state='disabled')
+                    window.chat_display.see(tk.END)
+                    window.lift()
+
+        except Exception as e:
+            print(f"Error handling secure file: {e}")
+
     def open_private_chat(self, with_user):
         # Check for existing window
         if with_user in self.private_chat_windows:
@@ -405,8 +450,55 @@ class ChatClient:
             elif not with_user in self.secure_chat.shared_keys:
                 messagebox.showinfo("Info", "Secure chat connection not yet established")
 
+        input_frame = ttk.Frame(private_chat_window)
+        input_frame.pack(fill=tk.X, pady=(0, 5))
+
+        message_entry = ttk.Entry(input_frame)
+        message_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
+
+        # Add send file button
+        def send_secure_file():
+            if with_user not in self.secure_chat.shared_keys:
+                messagebox.showinfo("Info", "Secure chat connection not yet established")
+                return
+
+            file_path = filedialog.askopenfilename()
+            if not file_path:
+                return
+
+            try:
+                file_size = os.path.getsize(file_path)
+                if file_size > 10_000_000:  # 10MB limit
+                    messagebox.showerror("Error", "File is too large. Maximum size is 10MB.")
+                    return
+
+                shared_key = self.secure_chat.shared_keys[with_user]
+                file_name = os.path.basename(file_path)
+
+                # Read and encrypt file
+                with open(file_path, 'rb') as file:
+                    file_data = file.read()
+                encrypted_data = self.secure_chat.encrypt_file(file_data, shared_key)
+
+                # Send encrypted file
+                self.client_socket.send(f"SECURE_FILE|{with_user}|{file_name}|{len(encrypted_data)}".encode())
+                time.sleep(0.1)  # Small delay to ensure header is processed
+                self.client_socket.sendall(encrypted_data)
+
+                chat_display.configure(state='normal')
+                chat_display.insert(tk.END, f"You sent file: {file_name}\n")
+                chat_display.configure(state='disabled')
+                chat_display.see(tk.END)
+
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to send file: {e}")
+
         send_button = ttk.Button(input_frame, text="Send", command=send_secure_message)
         send_button.pack(side=tk.LEFT)
+
+        file_button = ttk.Button(input_frame, text="Send File", command=send_secure_file)
+        file_button.pack(side=tk.LEFT, padx=(5, 0))
+
         message_entry.bind("<Return>", lambda e: send_secure_message())
 
         # Store window and display

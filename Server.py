@@ -230,6 +230,28 @@ class ChatServer:
                     message = parts[2]
                     self.send_private_message(username, recipient, message)
 
+                elif data.startswith("SECURE_FILE|"):
+                    _, recipient, file_name, file_size = data.split("|")
+                    file_size = int(file_size)
+
+                    # Forward file header to recipient
+                    if recipient in self.active_users:
+                        recipient_socket = self.active_users[recipient]
+                        try:
+                            recipient_socket.send(f"SECURE_FILE|{username}|{file_name}|{file_size}".encode())
+
+                            # Forward encrypted file data
+                            remaining = file_size
+                            while remaining > 0:
+                                chunk = client_socket.recv(min(remaining, 8192))
+                                if not chunk:
+                                    break
+                                recipient_socket.sendall(chunk)
+                                remaining -= len(chunk)
+
+                        except Exception as e:
+                            print(f"Error forwarding secure file: {e}")
+
             except Exception as e:
                 print(f"Error in message loop: {e}")
                 break
