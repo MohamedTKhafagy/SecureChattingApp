@@ -95,7 +95,6 @@ class ChatClient:
         actions_frame.pack(fill=tk.X)
 
         ttk.Button(actions_frame, text="Start New Chat", command=self.start_chat).pack(side=tk.LEFT, padx=5)
-        ttk.Button(actions_frame, text="Send File", command=self.send_file).pack(side=tk.LEFT, padx=5)
         ttk.Button(actions_frame, text="Logout", command=self.logout).pack(side=tk.RIGHT, padx=5)
 
         # Online users panel
@@ -424,12 +423,6 @@ class ChatClient:
 
         chat_display = ScrolledText(private_chat_window, wrap=tk.WORD, height=20)
         chat_display.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
-
-        input_frame = ttk.Frame(private_chat_window)
-        input_frame.pack(fill=tk.X, pady=(0, 5))
-
-        message_entry = ttk.Entry(input_frame)
-        message_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
 
         def send_secure_message():
             message = message_entry.get().strip()
